@@ -2,11 +2,80 @@
 
 version: '3'
 
+dotenv:
+  - .env
+
 vars:
-  GREETING: Hello, World!
+  DSN: "{{.DB_CONNECTION}}://{{.DB_USER}}:{{.DB_PASSWORD}}@{{.DB_HOST}}:{{.DB_PORT}}/{{.DB_NAME}}?sslmode=disable"
 
 tasks:
   default:
+    desc: "Gettings started"
     cmds:
-      - echo "{{.GREETING}}"
-    silent: true
+      - task: install
+  
+  install:
+    desc: "Install dependencies"
+    cmds:
+      - go install github.com/air-verse/air@latest
+      - go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+      - go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+      - go install github.com/bufbuild/buf/cmd/buf@v1.48.0
+      - go install github.com/vektra/mockery/v2@v2.50.0
+      - go install github.com/google/yamlfmt/cmd/yamlfmt@latest
+      - go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+
+  service:up:
+    desc: "Start the service"
+    cmd: docker compose up -d
+  
+  service:down:
+    desc: "Stop services"
+    cmd: docker compose down
+  
+  db:create:
+    desc: "Create database if not exists"
+    cmd: docker exec -it {{.APP_NAME}}-db sh -c "psql -U {{.DB_USER}} -c 'SELECT 1' -d {{.DB_NAME}} &>/dev/null || psql -U {{.DB_USER}} -c 'CREATE DATABASE {{.DB_NAME}};'"
+    requires:
+      vars:
+        - APP_NAME
+        - DB_USER
+        - DB_NAME
+
+  db:drop:
+    desc: "Drop database"
+    cmd: docker exec -it {{.APP_NAME}}-db sh -c "psql -U {{.DB_USER}} -c 'DROP DATABASE {{.DB_NAME}};'"
+    requires:
+      vars:
+        - APP_NAME
+        - DB_USER
+        - DB_NAME
+
+  db:cli:
+    desc: "Connect to database using command line interface"
+    cmd: docker exec -it {{.APP_NAME}}-db sh -c "psql -U {{.DB_USER}} -d {{.DB_NAME}}"
+    requires:
+      vars:
+        - APP_NAME
+        - DB_USER
+        - DB_NAME
+
+  migrate:up:
+    desc: "Run database migrations"
+    cmd: migrate -path ./pkg/storage/postgres/migrations -database {{.DSN}} -verbose up {{.CLI_ARGS}}
+    requires:
+      vars:
+        - DSN
+
+  migrate:down:
+    desc: "Rollback database migrations"
+    cmd: migrate -path ./pkg/storage/postgres/migrations -database {{.DSN}} -verbose down {{.CLI_ARGS}}
+    requires:
+      vars:
+        - DSN
+  
+  test:
+    desc: "Run tests"
+    cmds:
+      - go test -v ./... -race -cover -timeout 60s -count 1 -coverprofile=coverage.out
+      - go tool cover -html=coverage.out -o coverage.html
